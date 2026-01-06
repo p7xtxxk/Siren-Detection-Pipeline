@@ -119,7 +119,6 @@ See the [LICENSE](LICENSE) file for details.
 ## Author
 
 **Prateek Priyanshu**
-Minor Project – Siren Detection using Deep Learning
 
 ---
 
