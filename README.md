@@ -1,5 +1,5 @@
 
-# SoundSentinel
+# SirenGuardian
 
 A deep learning–based pipeline for detecting emergency sirens from audio signals using TensorFlow and Keras.
 This project was developed as part of a **Minor Project** in **ECSc.** Course at **KIIT University** and focuses on audio preprocessing, model training, and deployment-ready inference formats.
