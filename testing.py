@@ -1,0 +1,117 @@
+import numpy as np
+import librosa
+import tensorflow as tf
+import matplotlib.pyplot as plt
+import librosa.display
+import os
+
+# --- Config (match training) ---
+SR = 22050
+WIN_SEC = 1.5
+HOP_SEC = 0.1   # smaller hop for near-continuous detection
+N_MELS = 64
+THRESH = 0.215  # tuned threshold
+
+# --- Feature extraction ---
+def extract_logmel(x, sr=SR, n_mels=N_MELS):
+    S = librosa.feature.melspectrogram(y=x, sr=sr, n_fft=1024,
+                                       hop_length=256, n_mels=n_mels)
+    log_S = librosa.power_to_db(S, ref=np.max)
+    return log_S.astype(np.float32)
+
+def preprocess_segment(seg):
+    logmel = extract_logmel(seg)
+    logmel = logmel[..., np.newaxis][np.newaxis, ...]  # add channel + batch
+    return logmel.astype(np.float32)
+
+# --- Load TFLite model ---
+def load_tflite_model(model_path):
+    interpreter = tf.lite.Interpreter(model_path=model_path)
+    interpreter.allocate_tensors()
+    return interpreter
+
+def run_tflite_inference(interpreter, X):
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+    interpreter.set_tensor(input_details[0]['index'], X)
+    interpreter.invoke()
+    prob = float(interpreter.get_tensor(output_details[0]['index'])[0][0])
+    return prob
+
+# --- Continuous detection ---
+def continuous_detection(file_path, interpreter, sr=SR, win_sec=WIN_SEC, hop_sec=HOP_SEC, thresh=THRESH):
+    y, _ = librosa.load(file_path, sr=sr, mono=True)
+    if np.max(np.abs(y)) > 0:
+        y = y / np.max(np.abs(y))
+
+    step = int(hop_sec * sr)
+    win = int(win_sec * sr)
+    times, probs = [], []
+
+    for start in range(0, len(y) - win + 1, step):
+        seg = y[start:start+win]
+        X = preprocess_segment(seg)
+        prob = run_tflite_inference(interpreter, X)
+        times.append(start / sr)
+        probs.append(prob)
+
+    # Find exact onset/offset points
+    detections = []
+    active = False
+    onset = None
+    for t, p in zip(times, probs):
+        if not active and p >= thresh:
+            active = True
+            onset = t
+        elif active and p < thresh:
+            active = False
+            detections.append((onset, t))
+    if active:
+        detections.append((onset, times[-1]))
+
+    return y, times, probs, detections
+
+# --- Visualization ---
+def plot_results(file_path, y, times, probs, detections):
+    # Spectrogram
+    S = librosa.feature.melspectrogram(y=y, sr=SR, n_fft=1024,
+                                       hop_length=256, n_mels=N_MELS)
+    log_S = librosa.power_to_db(S, ref=np.max)
+
+    plt.figure(figsize=(14, 6))
+
+    # Log-Mel spectrogram
+    plt.subplot(2,1,1)
+    librosa.display.specshow(log_S, sr=SR, hop_length=256,
+                             x_axis='time', y_axis='mel')
+    plt.colorbar(format='%+2.0f dB')
+    plt.title(f"Log-Mel Spectrogram: {os.path.basename(file_path)}")
+
+    # Probability curve
+    plt.subplot(2,1,2)
+    plt.plot(times, probs, label="Siren probability")
+    plt.axhline(THRESH, color='r', linestyle='--', label=f"Threshold={THRESH}")
+    for onset, offset in detections:
+        plt.axvspan(onset, offset, color='red', alpha=0.3)
+    plt.xlabel("Time (s)")
+    plt.ylabel("Probability")
+    plt.title("Continuous Detection Curve")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+# --- Main ---
+if __name__ == "__main__":
+    file_path = r"C:\Users\prate\Downloads\Music\Interstellar Main Theme - Extended Version  Instrumental.mp3"
+    # file_path = r"C:\Users\prate\Downloads\Music\police-siren-397963.mp3"
+    model_path = r"C:\Users\prate\Downloads\College Academics\Minor Project\Minor Project\Siren-Detection-Pipeline\siren_model.tflite"
+
+    interpreter = load_tflite_model(model_path)
+    y, times, probs, detections = continuous_detection(file_path, interpreter)
+
+    print(f"\nFile: {os.path.basename(file_path)}")
+    print("Exact detections:")
+    for onset, offset in detections:
+        print(f"  Siren detected from {onset:.2f}s to {offset:.2f}s")
+
+    plot_results(file_path, y, times, probs, detections)
